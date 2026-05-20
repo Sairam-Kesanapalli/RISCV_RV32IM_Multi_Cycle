@@ -5,7 +5,7 @@ module svt_tb;
     reg rst_n;
 
     // Processor Instantiation
-    rv32i_multi_cycle rv (
+    rv32im_multi_cycle rv (
         .clk(clk),
         .rst_n(rst_n)
     );
@@ -39,7 +39,7 @@ module svt_tb;
         
         // Wait sufficient time for multi-cycle execution
         // Each instruction takes 3-5 cycles (30-50ns). 200 instructions ≈ 8000ns
-        #8000;
+        #15000;  // Increased for iterative mul/div (32 cycles each)
         
         $display("\n=======================================================");
         $display("          SOFTWARE VERIFICATION TESTBENCH (SVT)          ");

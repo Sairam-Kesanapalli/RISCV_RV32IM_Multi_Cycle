@@ -23,7 +23,7 @@ always #5 clk = ~clk;
         rst_n = 0;
          #10;
         rst_n = 1;
-       #3000; // Enough time for multi-cycle + M-extension stalls
+       #10000; // Enough time for iterative mul/div (32 cycles each)
 
        $display("===== Register File Dump =====");
        for (i = 0; i < 23; i = i + 1) begin
