@@ -1,15 +1,60 @@
 import re
 import sys
 
-# 1. Parse instruction_mem.v to extract hex opcodes
+# 1. Parse instruction_mem.v to extract opcodes
+#    Supports both 32'hXXXX hex literals and Verilog concatenation syntax
+#    like {7'b0000001, 5'd2, 5'd1, 3'b000, 5'd10, 7'b0110011}
 def parse_imem(path):
-    instrs = []
+    instrs = {}  # Use dict keyed by index to handle duplicate assignments
     with open(path) as f:
         for line in f:
-            m = re.search(r'32\'h([0-9a-fA-F]+)', line)
-            if m:
-                instrs.append(int(m.group(1), 16))
-    return instrs
+            # Try to extract the memory index
+            idx_match = re.search(r'instr_memory\[(\d+)\]', line)
+            if not idx_match:
+                continue
+            idx = int(idx_match.group(1))
+
+            # Try hex literal first: 32'hXXXXXXXX
+            hex_match = re.search(r"32'h([0-9a-fA-F]+)", line)
+            if hex_match:
+                instrs[idx] = int(hex_match.group(1), 16)
+                continue
+
+            # Try Verilog concatenation syntax: {width'bBITS, width'dDEC, ...}
+            concat_match = re.search(r'\{(.+)\}', line)
+            if concat_match:
+                fields = concat_match.group(1).split(',')
+                val = 0
+                for field in fields:
+                    field = field.strip()
+                    m = re.match(r"(\d+)'b([01]+)", field)
+                    if m:
+                        width = int(m.group(1))
+                        bits = int(m.group(2), 2)
+                        val = (val << width) | bits
+                        continue
+                    m = re.match(r"(\d+)'d(\d+)", field)
+                    if m:
+                        width = int(m.group(1))
+                        bits = int(m.group(2))
+                        val = (val << width) | bits
+                        continue
+                    m = re.match(r"(\d+)'h([0-9a-fA-F]+)", field)
+                    if m:
+                        width = int(m.group(1))
+                        bits = int(m.group(2), 16)
+                        val = (val << width) | bits
+                        continue
+                instrs[idx] = val & 0xFFFFFFFF
+
+    # Convert dict to sorted list
+    if not instrs:
+        return []
+    max_idx = max(instrs.keys())
+    result = []
+    for i in range(max_idx + 1):
+        result.append(instrs.get(i, 0x00000013))  # NOP for missing entries
+    return result
 
 # 2. Tiny RV32I simulator
 #    Models the same word-indexed memory as the RTL:
@@ -20,9 +65,10 @@ IMEM_DEPTH = 256
 
 def simulate(instrs, max_cycles=800):
     """
-    Cycle-accurate RV32I simulator.
+    Cycle-accurate RV32IM simulator.
     Counts clock cycles per instruction to match the RTL FSM:
-      - R-Type, I-Type, LUI, AUIPC: 3 cycles (FETCH -> DECODE -> PC_INC)
+      - R-Type, I-Type, LUI, AUIPC: 4 cycles (FETCH -> DECODE -> EXEC -> PC_INC)
+      - M-Extension (MUL/DIV/REM):  37 cycles (FETCH -> DECODE -> 34 EXEC stalls -> PC_INC)
       - Load:                        5 cycles (FETCH -> DECODE -> MEM_ADDR -> MEM_READ -> MEM_WB)
       - Store:                       4 cycles (FETCH -> DECODE -> MEM_ADDR -> MEM_WRITE)
       - Branch (not taken):          4 cycles (FETCH -> DECODE -> BRANCH_EX -> PC_INC)
@@ -48,6 +94,9 @@ def simulate(instrs, max_cycles=800):
 
     while cycle < max_cycles:
         idx = word_index(pc)
+        if idx >= len(instrs):
+            break  # Mimic RTL stalling on uninitialized memory (reads X -> default state)
+            
         instr = padded_imem[idx]
         opcode = instr & 0x7F
         rd     = (instr >> 7)  & 0x1F
@@ -68,18 +117,65 @@ def simulate(instrs, max_cycles=800):
         next_pc = pc + 4
         instr_cycles = 3  # Default: R/I/LUI/AUIPC/JAL/JALR
 
-        if opcode == 0x33:    # R-type (3 cycles)
-            if   funct3==0: regs[rd] = (r1+r2 if funct7==0 else r1-r2) & 0xFFFFFFFF
-            elif funct3==1: regs[rd] = (r1 << (r2 & 0x1F)) & 0xFFFFFFFF          # SLL
-            elif funct3==2: regs[rd] = 1 if sign_ext(r1,32) < sign_ext(r2,32) else 0  # SLT
-            elif funct3==3: regs[rd] = 1 if (r1 & 0xFFFFFFFF) < (r2 & 0xFFFFFFFF) else 0  # SLTU
-            elif funct3==4: regs[rd] = (r1^r2) & 0xFFFFFFFF                       # XOR
-            elif funct3==5:                                                        # SRL / SRA
-                if funct7==0: regs[rd] = (r1 >> (r2 & 0x1F)) & 0xFFFFFFFF
-                else:         regs[rd] = (sign_ext(r1,32) >> (r2 & 0x1F)) & 0xFFFFFFFF
-            elif funct3==6: regs[rd] = (r1|r2) & 0xFFFFFFFF                       # OR
-            elif funct3==7: regs[rd] = (r1&r2) & 0xFFFFFFFF                       # AND
-            instr_cycles = 4  # FETCH -> DECODE -> EXEC_R -> PC_INC
+        if opcode == 0x33:    # R-type or M-extension
+            if funct7 == 0x01:
+                # ---- M-Extension (funct7 = 0000001) ----
+                s1 = sign_ext(r1, 32)
+                s2 = sign_ext(r2, 32)
+                if   funct3 == 0:  # MUL
+                    regs[rd] = (s1 * s2) & 0xFFFFFFFF
+                elif funct3 == 1:  # MULH (signed * signed, upper 32)
+                    regs[rd] = ((s1 * s2) >> 32) & 0xFFFFFFFF
+                elif funct3 == 2:  # MULHSU (signed * unsigned, upper 32)
+                    regs[rd] = ((s1 * (r2 & 0xFFFFFFFF)) >> 32) & 0xFFFFFFFF
+                elif funct3 == 3:  # MULHU (unsigned * unsigned, upper 32)
+                    regs[rd] = (((r1 & 0xFFFFFFFF) * (r2 & 0xFFFFFFFF)) >> 32) & 0xFFFFFFFF
+                elif funct3 == 4:  # DIV (signed)
+                    if r2 == 0:
+                        regs[rd] = 0xFFFFFFFF
+                    elif s1 == -2147483648 and s2 == -1:
+                        regs[rd] = s1 & 0xFFFFFFFF  # overflow
+                    else:
+                        # Python integer division truncates toward negative infinity;
+                        # RISC-V truncates toward zero. Use int() to match C behavior.
+                        regs[rd] = int(s1 / s2) & 0xFFFFFFFF
+                elif funct3 == 5:  # DIVU (unsigned)
+                    if r2 == 0:
+                        regs[rd] = 0xFFFFFFFF
+                    else:
+                        regs[rd] = ((r1 & 0xFFFFFFFF) // (r2 & 0xFFFFFFFF)) & 0xFFFFFFFF
+                elif funct3 == 6:  # REM (signed)
+                    if r2 == 0:
+                        regs[rd] = r1 & 0xFFFFFFFF
+                    elif s1 == -2147483648 and s2 == -1:
+                        regs[rd] = 0  # overflow
+                    else:
+                        # RISC-V: rem has sign of dividend. Use math.remainder behavior.
+                        rem_val = s1 - int(s1 / s2) * s2
+                        regs[rd] = rem_val & 0xFFFFFFFF
+                elif funct3 == 7:  # REMU (unsigned)
+                    if r2 == 0:
+                        regs[rd] = r1 & 0xFFFFFFFF
+                    else:
+                        regs[rd] = ((r1 & 0xFFFFFFFF) % (r2 & 0xFFFFFFFF)) & 0xFFFFFFFF
+                # M-extension cycle count:
+                # FETCH(1) + DECODE(1) + IDLE->CALC(1) + 32 iterations + FINISH(1) + PC_INC(1) = 37
+                # But control_unit stays in EXEC_R_OR_MUL until alu_done, then goes to PC_INC.
+                # Simplified: 2 (FETCH+DECODE) + 34 (EXEC stall: IDLE+32 iter+FINISH) + 1 (PC_INC) = 37
+                instr_cycles = 37
+            else:
+                # ---- Base R-Type ----
+                if   funct3==0: regs[rd] = (r1+r2 if funct7==0 else r1-r2) & 0xFFFFFFFF
+                elif funct3==1: regs[rd] = (r1 << (r2 & 0x1F)) & 0xFFFFFFFF          # SLL
+                elif funct3==2: regs[rd] = 1 if sign_ext(r1,32) < sign_ext(r2,32) else 0  # SLT
+                elif funct3==3: regs[rd] = 1 if (r1 & 0xFFFFFFFF) < (r2 & 0xFFFFFFFF) else 0  # SLTU
+                elif funct3==4: regs[rd] = (r1^r2) & 0xFFFFFFFF                       # XOR
+                elif funct3==5:                                                        # SRL / SRA
+                    if funct7==0: regs[rd] = (r1 >> (r2 & 0x1F)) & 0xFFFFFFFF
+                    else:         regs[rd] = (sign_ext(r1,32) >> (r2 & 0x1F)) & 0xFFFFFFFF
+                elif funct3==6: regs[rd] = (r1|r2) & 0xFFFFFFFF                       # OR
+                elif funct3==7: regs[rd] = (r1&r2) & 0xFFFFFFFF                       # AND
+                instr_cycles = 4  # FETCH -> DECODE -> EXEC_R -> PC_INC
         elif opcode == 0x13:  # I-type arithmetic (3 cycles)
             if   funct3==0: regs[rd] = (r1 + i_imm) & 0xFFFFFFFF                  # ADDI
             elif funct3==2: regs[rd] = 1 if sign_ext(r1, 32) < sign_ext(i_imm, 32) else 0  # SLTI
