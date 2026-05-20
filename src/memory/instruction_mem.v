@@ -13,43 +13,45 @@ module instruction_memory #(
 
 
     initial begin
-        instr_memory[0]   = 32'h00a00093;
-        instr_memory[1]   = 32'h00500113;
-        instr_memory[2]   = 32'h0030f193;
-        instr_memory[3]   = 32'h00816213;
-        instr_memory[4]   = 32'h00f0c293;
-        instr_memory[5]   = 32'h00111313;
-        instr_memory[6]   = 32'h0010d393;
-        instr_memory[7]   = 32'h4010d413;
-        instr_memory[8]   = 32'h00a12493;
-        instr_memory[9]   = 32'h00208533;
-        instr_memory[10]  = 32'h402085b3;
-        instr_memory[11]  = 32'h0020f633;
-        instr_memory[12]  = 32'h0020e6b3;
-        instr_memory[13]  = 32'h0020c733;
-        instr_memory[14]  = 32'h009117b3;
-        instr_memory[15]  = 32'h0090d833;
-        instr_memory[16]  = 32'h4090d8b3;
-        instr_memory[17]  = 32'h00112933;
-        instr_memory[18]  = 32'h10010a37;
-        instr_memory[19]  = 32'h00aa2023;
-        instr_memory[20]  = 32'h000a2983;
-        instr_memory[21]  = 32'h00108463;
-        instr_memory[22]  = 32'h06400a93;
-        instr_memory[23]  = 32'h00209463;
-        instr_memory[24]  = 32'h0c800b13;
-        instr_memory[25]  = 32'h00114463;
-        instr_memory[26]  = 32'h12c00b93;
-        instr_memory[27]  = 32'h0020d463;
-        instr_memory[28]  = 32'h19000c13;
-        instr_memory[29]  = 32'h00800cef;
-        instr_memory[30]  = 32'h1f400d13;
-        instr_memory[31]  = 32'h03700d13;
-        instr_memory[32]  = 32'h00400db7;
-        instr_memory[33]  = 32'h060d8d93;
-        instr_memory[34]  = 32'h000d8e67;
-        instr_memory[35]  = 32'h07b00e93;
-        instr_memory[36]  = 32'h04d00e93;
+        // ---- Clean RV32IM Test Program ----
+        // Phase 1: Setup registers with ADDI
+        instr_memory[0]  = 32'h00a00093;  // ADDI x1,  x0, 10    => x1  = 10
+        instr_memory[1]  = 32'h00300113;  // ADDI x2,  x0, 3     => x2  = 3
+        instr_memory[2]  = 32'h00700193;  // ADDI x3,  x0, 7     => x3  = 7
+        instr_memory[3]  = 32'hfff00213;  // ADDI x4,  x0, -1    => x4  = -1 (0xFFFFFFFF)
+        instr_memory[4]  = 32'h00000293;  // ADDI x5,  x0, 0     => x5  = 0
+
+        // Phase 2: R-Type (base RV32I) sanity check
+        instr_memory[5]  = 32'h002081b3;  // ADD  x3,  x1, x2    => x3  = 10 + 3 = 13
+        instr_memory[6]  = 32'h40208233;  // SUB  x4,  x1, x2    => x4  = 10 - 3 = 7
+
+        // Phase 3: M-Extension instructions
+        // MUL  x10, x1, x2  => x10 = 10 * 3 = 30
+        instr_memory[7]  = {7'b0000001, 5'd2, 5'd1, 3'b000, 5'd10, 7'b0110011};
+        // DIV  x11, x1, x2  => x11 = 10 / 3 = 3
+        instr_memory[8]  = {7'b0000001, 5'd2, 5'd1, 3'b100, 5'd11, 7'b0110011};
+        // REM  x12, x1, x2  => x12 = 10 % 3 = 1
+        instr_memory[9]  = {7'b0000001, 5'd2, 5'd1, 3'b110, 5'd12, 7'b0110011};
+        // DIVU x13, x1, x2  => x13 = 10 / 3 = 3 (unsigned)
+        instr_memory[10] = {7'b0000001, 5'd2, 5'd1, 3'b101, 5'd13, 7'b0110011};
+        // REMU x14, x1, x2  => x14 = 10 % 3 = 1 (unsigned)
+        instr_memory[11] = {7'b0000001, 5'd2, 5'd1, 3'b111, 5'd14, 7'b0110011};
+        // MULH x15, x1, x2  => x15 = upper32(10 * 3) = 0
+        instr_memory[12] = {7'b0000001, 5'd2, 5'd1, 3'b001, 5'd15, 7'b0110011};
+        // MULHU x16, x1, x2 => x16 = upper32(10 * 3) = 0 (unsigned)
+        instr_memory[13] = {7'b0000001, 5'd2, 5'd1, 3'b011, 5'd16, 7'b0110011};
+
+        // Phase 4: Division by zero edge case
+        // ADDI x20, x0, 0   => x20 = 0
+        instr_memory[14] = 32'h00000a13;
+        // DIV  x21, x1, x20 => x21 = 10 / 0 = -1 (0xFFFFFFFF per RISC-V spec)
+        instr_memory[15] = {7'b0000001, 5'd20, 5'd1, 3'b100, 5'd21, 7'b0110011};
+        // REM  x22, x1, x20 => x22 = 10 % 0 = 10 (dividend, per RISC-V spec)
+        instr_memory[16] = {7'b0000001, 5'd20, 5'd1, 3'b110, 5'd22, 7'b0110011};
+
+        // NOP padding (ADDI x0, x0, 0) to let pipeline drain
+        instr_memory[17] = 32'h00000013;
+        instr_memory[18] = 32'h00000013;
     end
 
     assign instr = instr_memory[addr[ADDR_WIDTH+1:2]];
