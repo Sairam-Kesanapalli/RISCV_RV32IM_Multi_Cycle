@@ -15,7 +15,7 @@
  *    +-----------------+------------+--------------+---> Write Back to Registers
  *
  *********************************************************************************/
-module rv32i_multi_cycle #(
+module rv32im_multi_cycle #(
     parameter XLEN = 32
 )(
     input clk,
@@ -52,6 +52,8 @@ module rv32i_multi_cycle #(
     wire [XLEN-1:0] read_data1;
     wire [XLEN-1:0] read_data2;
     wire [XLEN-1:0] alu_result;
+    wire is_mul_div;
+    wire [31:0] mul_div_result;
 
     // Control signals from FSM
     wire IRWrite;
@@ -100,8 +102,6 @@ module rv32i_multi_cycle #(
     wire busy;
     wire done;
     wire start;
-    wire [31:0] mul_div_result;
-    wire is_mul_div;
 
     control_unit cu(
         .clk(clk),
