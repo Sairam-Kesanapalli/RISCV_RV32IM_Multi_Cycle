@@ -52,6 +52,20 @@ module instruction_memory #(
         // NOP padding (ADDI x0, x0, 0) to let pipeline drain
         instr_memory[17] = 32'h00000013;
         instr_memory[18] = 32'h00000013;
+
+        // ---- Regression Framework Overlay ----
+        // If +TEST_DIR is provided, overwrite the hardcoded instructions above
+        // with the specific regression test's program.hex
+        begin : load_test
+            reg [8191:0] test_dir; // 1024 bytes string
+            integer i;
+            if ($value$plusargs("TEST_DIR=%s", test_dir)) begin
+                for (i = 0; i < DEPTH; i = i + 1) begin
+                    instr_memory[i] = 32'hx;
+                end
+                $readmemh({test_dir, "/program.hex"}, instr_memory);
+            end
+        end
     end
 
     assign instr = instr_memory[addr[ADDR_WIDTH+1:2]];
