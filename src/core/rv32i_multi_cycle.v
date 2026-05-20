@@ -74,7 +74,7 @@ module rv32i_multi_cycle #(
             MDR <= mem_data;
             A <= read_data1;
             B <= read_data2;
-            ALUOut <= alu_result;
+            ALUOut <= (is_mul_div) ? mul_div_result : alu_result;
         end
     end
 
@@ -97,13 +97,19 @@ module rv32i_multi_cycle #(
     // the correct signals to steer data through the datapath multiplexers.
     wire RegWrite, MemRead, MemWrite, MemToReg, Branch, Jump;
     wire [2:0] ALU_OP;
+    wire busy;
+    wire done;
+    wire start;
+    wire [31:0] mul_div_result;
+    wire is_mul_div;
 
     control_unit cu(
         .clk(clk),
         .rst_n(rst_n),
         .op_code(opcode),
         .branch_taken(branch_taken),
-
+        .alu_done(~is_mul_div | done),
+        .is_busy(busy),
         .PCWrite(PCWrite),
         .IRWrite(IRWrite),
         .RegWrite(RegWrite),
@@ -148,17 +154,34 @@ module rv32i_multi_cycle #(
     // =========================================================================
     // The ALU Control translates the generic ALU_OP from the main Control Unit
     // and the instruction's funct3/funct7 into a specific 4-bit ALU command.
+    wire [2:0] md_op;   //Uses funct3
     wire [3:0] alu_op;
     alu_control ac(
         .ALU_OP(ALU_OP),
         .funct3(funct3),
         .funct7(funct7),
-        .alu_op(alu_op)
+        .alu_op(alu_op),
+        .is_mul_div(is_mul_div),
+        .md_op(md_op)
     );
 
     wire [XLEN-1:0] alu_input_b;
     wire [XLEN-1:0] alu_input_a;
     wire zero_flag, carry_out, negative, overflow;
+
+    assign start = is_mul_div;
+
+    mul_div md(
+        .clk(clk),
+        .rst_n(rst_n),
+        .start(start),
+        .md_op(md_op),
+        .A(alu_input_a),
+        .B(alu_input_b),
+        .Result(mul_div_result),
+        .busy(busy),
+        .done(done)
+    );
 
     // ---------------------------------------------------------
     // MULTI-CYCLE MUX: ALUSrcA
