@@ -143,7 +143,7 @@ module control_unit (
                 // ALUOut = A op B
                 ALUSrcA_ctrl = 2'b01; // A
                 ALUSrcB_ctrl = 2'b00; // B
-                ALU_OP       = 3'd2;  // R-Type
+                ALU_OP       = 3'd2;  // R-Type or M-Type
             end
 
             EXEC_I: begin
