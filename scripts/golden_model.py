@@ -257,20 +257,45 @@ def emit_hex(regs, mem, pc, out_dir="."):
         f.write(f"{pc:08x}\n")
     print(f"[golden] PC={pc:#010x}  x1={regs[1]:#010x}  x2={regs[2]:#010x}")
 
+def parse_hex(path):
+    instrs = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            # Ignore empty lines and comments
+            if not line or line.startswith('//'):
+                continue
+            instrs.append(int(line, 16))
+    return instrs
+
 if __name__ == "__main__":
     import os
+    import argparse
     
-    # Try to find the instruction_mem.v file gracefully if executed from different directories
-    if os.path.exists("src/memory/instruction_mem.v"):
-        imem_path = "src/memory/instruction_mem.v"
-        out_dir = "tb"
-    elif os.path.exists("../src/memory/instruction_mem.v"):
-        imem_path = "../src/memory/instruction_mem.v"
-        out_dir = "../tb"
+    parser = argparse.ArgumentParser(description="RISC-V Golden Model")
+    parser.add_argument("--test-dir", type=str, help="Directory containing program.hex")
+    args = parser.parse_args()
+
+    if args.test_dir:
+        # ---- Regression Framework Flow ----
+        imem_path = os.path.join(args.test_dir, "program.hex")
+        out_dir = args.test_dir
+        if not os.path.exists(imem_path):
+            print(f"Cannot find {imem_path}")
+            sys.exit(1)
+        instrs = parse_hex(imem_path)
     else:
-        print("Cannot find instruction_mem.v")
-        sys.exit(1)
-        
-    instrs = parse_imem(imem_path)
+        # ---- Default `make svt` Flow ----
+        if os.path.exists("src/memory/instruction_mem.v"):
+            imem_path = "src/memory/instruction_mem.v"
+            out_dir = "tb"
+        elif os.path.exists("../src/memory/instruction_mem.v"):
+            imem_path = "../src/memory/instruction_mem.v"
+            out_dir = "../tb"
+        else:
+            print("Cannot find instruction_mem.v")
+            sys.exit(1)
+        instrs = parse_imem(imem_path)
+
     regs, mem, pc = simulate(instrs)
     emit_hex(regs, mem, pc, out_dir)

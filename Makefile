@@ -61,6 +61,28 @@ svt: svt_golden
 	$(CC) $(CFLAGS) -o $(OUT_SVT) tb/svt_tb.v $(SOURCES)
 	$(SIM) $(OUT_SVT)
 
+# Regression Framework
+regression:
+	@echo "======================================================="
+	@echo "              RUNNING REGRESSION SUITE                 "
+	@echo "======================================================="
+	@$(CC) $(CFLAGS) -o $(OUT_SVT) tb/svt_tb.v $(SOURCES)
+	@failed=0; \
+	for test_dir in tests/* ; do \
+		if [ -d "$$test_dir" ]; then \
+			echo "Running $$test_dir..."; \
+			python3 scripts/golden_model.py --test-dir "$$test_dir" > /dev/null; \
+			if $(SIM) $(OUT_SVT) +TEST_DIR="$$test_dir" | grep -q "\[SVT PASS\]"; then \
+				echo "[PASS] $$(basename $$test_dir)"; \
+			else \
+				echo "[FAIL] $$(basename $$test_dir)"; \
+				failed=1; \
+			fi; \
+		fi \
+	done; \
+	echo "======================================================="; \
+	exit $$failed
+
 # Clean up generated files
 clean:
-	rm -f $(OUT_MAIN) $(OUT_DEBUG) $(OUT_SVT) golden_sim *.vcd tb/expected_*.hex
+	rm -f $(OUT_MAIN) $(OUT_DEBUG) $(OUT_SVT) golden_sim *.vcd tb/expected_*.hex tests/*/expected_*.hex
